@@ -24,7 +24,6 @@ accessID = str(os.environ.get("ODPSID"))
 accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
-
 sql = '''
 select distinct u.tk_user_id, a.create_time from
 (select user_id, create_time
@@ -38,8 +37,9 @@ limit 10000;
 '''
 
 start_date = (dt.datetime.now()).strftime('%Y%m%d')
-#start_date = (dt.datetime.now() + dt.timedelta(days=-30)).strftime('%Y%m%d')
+# start_date = (dt.datetime.now() + dt.timedelta(days=-30)).strftime('%Y%m%d')
 end_date = (dt.datetime.now() + dt.timedelta(days=-180)).strftime('%Y%m%d')
+
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -122,6 +122,7 @@ def upload(events):
     diff = time.time() - start
     logging.info('uploading %s events took %s', len(events), diff)
 
+
 def fetch_data_from_db(sql):
     sql = sql.replace('${start_date}', start_date)
     sql = sql.replace('${end_date}', end_date)
@@ -138,7 +139,6 @@ def fetch_data_from_db(sql):
         user_id = row[0]
         time = int(row[1].timestamp() * 1000)
 
-
         insert_id = hashlib.md5((str(user_id) + str(time)).encode()).hexdigest()
 
         cur_events.append(
@@ -151,10 +151,11 @@ def fetch_data_from_db(sql):
         )
     return cur_events
 
+
 def main():
     import sys
     cur_events = fetch_data_from_db(sql)
-    #print (cur_events)
+    # print (cur_events)
 
     rootLogger = logging.getLogger()
     rootLogger.setLevel(logging.INFO)
@@ -169,10 +170,8 @@ def main():
         logging.info('Must set API_KEY')
         return
 
-
     rownum = 0
     upl_events = []
-
 
     for line in cur_events:
         rownum += 1
