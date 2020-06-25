@@ -1,0 +1,19 @@
+Local env setup:
+Clone repo and install plugin
+https://github.com/Ashald/EnvFile
+
+Supply pycharm with .env file
+
+
+
+
+How to push changes to heroku
+
+>> git push heroku master
+
+Run script locally
+heroku local:run python hub.py
+
+Run script on prod
+heroku run python hub.py
+
