@@ -25,20 +25,30 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select distinct u.tk_user_id, a.create_time from
-(select user_id, create_time
-from v3_user_bill_asset_com
-where type=1 and pt>=${end_date} and pt<=${start_date}
-) a
+select distinct u.tk_user_id, a.timestamp,a.channel_name from
+((select user_id, completed_on as timestamp, channel_name
+from v_com_cash_deposit_order_4_usa_team
+where status=3 and pt=${start_date}
+      and completed_on<to_date("${end_date}",'yyyymmdd')
+      and completed_on>=to_date("${start_date}",'yyyymmdd'))
+union all
+(select user_id, created_date as timestamp, "Token" as channel_name
+from asset_ods_okcoin_deposit_transaction
+where status=2
+      and pt=${start_date}
+      and created_date<to_date("${end_date}",'yyyymmdd')
+      and created_date>=to_date("${start_date}",'yyyymmdd')
+)) a
 join v3_btc_user_uniform_4_usa_team u
 on a.user_id=u.user_id
-order by create_time, tk_user_id
+order by timestamp, tk_user_id
 limit 10000;
 '''
 
 start_date = (dt.datetime.now()).strftime('%Y%m%d')
 #start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
-end_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
+end_date = (dt.datetime.now() + dt.timedelta(days=+1)).strftime('%Y%m%d')
+
 
 
 # subclass of ThreadPoolExecutor that provides:
@@ -126,6 +136,7 @@ def upload(events):
 def fetch_data_from_db(sql):
     sql = sql.replace('${start_date}', start_date)
     sql = sql.replace('${end_date}', end_date)
+
     print('Quering DB for data from', end_date, 'to', start_date)
 
     sql_res = odps.execute_sql(sql)
@@ -149,6 +160,7 @@ def fetch_data_from_db(sql):
                 'insert_id': insert_id
             }
         )
+
     return cur_events
 
 
