@@ -36,9 +36,9 @@ order by create_time, tk_user_id
 limit 10000;
 '''
 
-#start_date = (dt.datetime.now()).strftime('%Y%m%d')
-start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
-end_date = (dt.datetime.now() + dt.timedelta(days=-90)).strftime('%Y%m%d')
+start_date = (dt.datetime.now()).strftime('%Y%m%d')
+#start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
+end_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
 
 
 # subclass of ThreadPoolExecutor that provides:
@@ -136,14 +136,16 @@ def fetch_data_from_db(sql):
     for row in reader:
         user_id = row[0]
         time = int(row[1].timestamp() * 1000)
+        channel = row[2]
 
-        insert_id = hashlib.md5((str(user_id) + str(time)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(user_id) + str(time)+str(channel)).encode()).hexdigest()
 
         cur_events.append(
             {
                 'event_type': event_type,
                 'user_id': user_id,
                 'time': time,
+                'channel': channel,
                 'insert_id': insert_id
             }
         )
