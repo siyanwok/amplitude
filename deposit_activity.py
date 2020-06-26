@@ -149,7 +149,7 @@ def fetch_data_from_db(sql):
         time = int(row[1].timestamp() * 1000)
         channel = row[2]
 
-        insert_id = hashlib.md5((str(user_id) + str(time)+str(channel)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time)+str(channel)).encode()).hexdigest()
 
         cur_events.append(
             {

@@ -45,7 +45,7 @@ limit 10000;
 
 start_date = (dt.datetime.now()).strftime('%Y%m%d')
 # start_date = (dt.datetime.now() + dt.timedelta(days=-30)).strftime('%Y%m%d')
-end_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
+end_date = (dt.datetime.now() + dt.timedelta(days=-90)).strftime('%Y%m%d')
 
 
 # subclass of ThreadPoolExecutor that provides:
@@ -145,7 +145,7 @@ def fetch_data_from_db(sql):
         time = int(row[1].timestamp() * 1000)
         revenue = row[2]
 
-        insert_id = hashlib.md5((str(user_id) + str(time) + str(revenue)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(revenue)).encode()).hexdigest()
 
         cur_events.append(
             {
