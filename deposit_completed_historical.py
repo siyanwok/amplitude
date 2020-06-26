@@ -6,16 +6,19 @@ import time
 from concurrent import futures
 from concurrent.futures import as_completed
 import datetime as dt
-import os
+
 import certifi
 import urllib3
 
 from odps import options
 from odps import ODPS
+from pytz import timezone
+import pytz
 
-event_type = "trading_activity"
+event_type = "deposit_completed"
 
 # Settings
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -25,28 +28,20 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select u.tk_user_id, c.trade_time, c.volume from v3_btc_user_uniform_4_usa_team u join
-(select a.user_id, min(create_time) as trade_time, sum(a.fee*b.price) as volume from
-((select user_id, create_time, currency_id, fee, pt
-from v3_user_bill_com_4_usa_team
-where type in (7,8))
-union all
-(select user_id, create_time, currency_id, fee, pt
-from v3_user_margin_bill_com_4_usa_team
-where type in (7,8))) a
-join out_com_currency_price_new b
-on a.currency_id=b.currency_id and a.pt=b.pt
-where a.pt>=${end_date} and a.pt<=${start_date}
-group by user_id) c
-on c.user_id=u.user_id
-order by trade_time, tk_user_id
-limit 10000;
+select distinct u.tk_user_id, a.create_time from
+(select user_id, create_time
+from v3_user_bill_asset_com
+where type=1 and pt>=${start_date} and pt<=${end_date}
+) a
+join v3_btc_user_uniform_4_usa_team u
+on a.user_id=u.user_id
+order by create_time, tk_user_id
+limit 100000;
 '''
 
-start_date = (dt.datetime.now()).strftime('%Y%m%d')
-# start_date = (dt.datetime.now() + dt.timedelta(days=-30)).strftime('%Y%m%d')
-end_date = (dt.datetime.now() + dt.timedelta(days=-90)).strftime('%Y%m%d')
 
+bj_twodaysago = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-2)).strftime('%Y%m%d')
+bj_historical = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-92)).strftime('%Y%m%d')
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -131,9 +126,10 @@ def upload(events):
 
 
 def fetch_data_from_db(sql):
-    sql = sql.replace('${start_date}', start_date)
-    sql = sql.replace('${end_date}', end_date)
-    print('Quering DB for data from', end_date, 'to', start_date)
+    sql = sql.replace('${start_date}', bj_historical)
+    sql = sql.replace('${end_date}', bj_twodaysago)
+
+    print('DB QUERY BJ TIME:', bj_historical, 'to', bj_twodaysago)
 
     sql_res = odps.execute_sql(sql)
 
@@ -142,20 +138,19 @@ def fetch_data_from_db(sql):
     cur_events = []
     for row in reader:
         user_id = row[0]
-        time = int(row[1].timestamp() * 1000)
-        revenue = row[2]
+        time = int(row[1].timestamp())
 
-        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(revenue)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time)).encode()).hexdigest()
 
         cur_events.append(
             {
                 'event_type': event_type,
                 'user_id': user_id,
                 'time': time,
-                'revenue': -revenue,
                 'insert_id': insert_id
             }
         )
+
     return cur_events
 
 
@@ -181,6 +176,7 @@ def main():
     upl_events = []
 
     for line in cur_events:
+        print(line)
         rownum += 1
         event = line
         if (
@@ -190,12 +186,18 @@ def main():
             continue
         upl_events.append(event)
         if len(upl_events) >= 1000:
-            logging.info('uploading %s events, row %s', len(upl_events), rownum)
-            upload(upl_events)
+            if not debug:
+                logging.info('uploading %s events, row %s', len(upl_events), rownum)
+                upload(upl_events)
+            print("BATCH OBJECT:")
+            print(upl_events)
             upl_events = []
     if cur_events:
-        logging.info('uploading %s events, row %s', len(upl_events), rownum)
-        upload(upl_events)
+        if not debug:
+            logging.info('uploading %s events, row %s', len(upl_events), rownum)
+            upload(upl_events)
+        print("BATCH OBJECT:")
+        print(upl_events)
 
 
 if __name__ == '__main__':

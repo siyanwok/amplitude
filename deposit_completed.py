@@ -13,9 +13,13 @@ import urllib3
 from odps import options
 from odps import ODPS
 
-event_type = "deposit"
+from pytz import timezone
+import pytz
+
+event_type = "deposit_completed"
 
 # Settings
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -28,16 +32,16 @@ sql = '''
 select distinct u.tk_user_id, a.timestamp,a.channel_name from
 ((select user_id, completed_on as timestamp, channel_name
 from v_com_cash_deposit_order_4_usa_team
-where status=3 and pt=${start_date}
-      and completed_on<to_date("${end_date}",'yyyymmdd')
-      and completed_on>=to_date("${start_date}",'yyyymmdd'))
+where status=3 and pt=${yesterday}
+      and completed_on<to_date("${today}",'yyyymmdd')
+      and completed_on>=to_date("${yesterday}",'yyyymmdd'))
 union all
 (select user_id, created_date as timestamp, "Token" as channel_name
 from asset_ods_okcoin_deposit_transaction
 where status=2
-      and pt=${start_date}
-      and created_date<to_date("${end_date}",'yyyymmdd')
-      and created_date>=to_date("${start_date}",'yyyymmdd')
+      and pt=${yesterday}
+      and created_date<to_date("${today}",'yyyymmdd')
+      and created_date>=to_date("${yesterday}",'yyyymmdd')
 )) a
 join v3_btc_user_uniform_4_usa_team u
 on a.user_id=u.user_id
@@ -45,10 +49,12 @@ order by timestamp, tk_user_id
 limit 10000;
 '''
 
-start_date = (dt.datetime.now()).strftime('%Y%m%d')
+#start_date = (dt.datetime.now()).strftime('%Y%m%d')
 #start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
-end_date = (dt.datetime.now() + dt.timedelta(days=+1)).strftime('%Y%m%d')
+#end_date = (dt.datetime.now() + dt.timedelta(days=+1)).strftime('%Y%m%d')
 
+bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
+bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
 
 
 # subclass of ThreadPoolExecutor that provides:
@@ -134,10 +140,10 @@ def upload(events):
 
 
 def fetch_data_from_db(sql):
-    sql = sql.replace('${start_date}', start_date)
-    sql = sql.replace('${end_date}', end_date)
+    sql = sql.replace('${yesterday}', bj_yesterday)
+    sql = sql.replace('${today}', bj_today)
 
-    print('Quering DB for data from', end_date, 'to', start_date)
+    print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_today)
 
     sql_res = odps.execute_sql(sql)
 
@@ -146,8 +152,10 @@ def fetch_data_from_db(sql):
     cur_events = []
     for row in reader:
         user_id = row[0]
-        time = int(row[1].timestamp() * 1000)
+        time = int(row[1].timestamp())
         channel = row[2]
+
+        #print(row[0], row[1], time, channel)
 
         insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time)+str(channel)).encode()).hexdigest()
 
@@ -156,7 +164,9 @@ def fetch_data_from_db(sql):
                 'event_type': event_type,
                 'user_id': user_id,
                 'time': time,
-                'channel': channel,
+                "event_properties": {
+                    'deposit_channel': channel,
+                },
                 'insert_id': insert_id
             }
         )
@@ -195,12 +205,19 @@ def main():
             continue
         upl_events.append(event)
         if len(upl_events) >= 1000:
-            logging.info('uploading %s events, row %s', len(upl_events), rownum)
-            upload(upl_events)
+            if not debug:
+                logging.info('uploading %s events, row %s', len(upl_events), rownum)
+                upload(upl_events)
+            print("BATCH OBJECT:")
+            print(upl_events)
             upl_events = []
     if cur_events:
-        logging.info('uploading %s events, row %s', len(upl_events), rownum)
-        upload(upl_events)
+        if not debug:
+            logging.info('uploading %s events, row %s', len(upl_events), rownum)
+            upload(upl_events)
+        print("BATCH OBJECT:")
+        print(upl_events)
+
 
 
 if __name__ == '__main__':
