@@ -12,13 +12,14 @@ import urllib3
 
 from odps import options
 from odps import ODPS
+
 from pytz import timezone
 import pytz
 
-event_type = "deposit_complete"
+event_type = "withdrawal_complete"
 
 # Settings
-debug = False
+debug = True
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -28,40 +29,46 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select distinct u.tk_user_id, a.timestamp, a.channel, a.symbol,a.channel_name
+select u.tk_user_id, w.withdraw_date, w.channel_name, w.symbol, w.withdraw_type
 from
-((select user_id, completed_on as timestamp
+(
+select distinct user_id, create_on as withdraw_date
 ,   case
-         when channel_id = 0 then 'Bank'
-         when channel_id = 24 then 'ACH'
-         when channel_id = 4 then 'Epay'
-         when channel_id in (3,27) then 'SEN'
-         when channel_id in (9,21) then 'PrimeX'
-         else 'other'
-         end as channel, symbol, channel_name
-  from v_com_cash_deposit_order_4_usa_team
-  where status=3
-  and pt=${yesterday}
-  and completed_on >= to_date('${start_date}','yyyymmdd'))
+      when channel_id = 0 then 'Wire Transfer'
+      when channel_id = 24 then 'ACH'
+      when channel_id = 4 then 'Epay'
+      when channel_id in (3,27) then 'SEN'
+      when channel_id in (9,21) then 'PrimeX'
+      else 'other'
+    end as channel_name
+, symbol, 'Fiat' as withdraw_type
+   from com_cash_withdraw_order
+   where status=3
+     and pt=${yesterday}
+   and create_on<to_date("${today}",'yyyymmdd')
+   and create_on>=to_date("${yesterday}",'yyyymmdd')
 union all
-(select user_id, created_date as timestamp,  "Token" as channel, symbol, "Token" as channel_name
- from asset_ods_okcoin_deposit_transaction a
-   inner join out_com_currency_price_new o
-     on a.currency_id = o.currency_id and o.pt = to_char(a.created_date, 'yyyymmdd')
- where status=2
-  and a.pt > ${start_date}
-)) a
-  join v3_btc_user_uniform_4_usa_team u
-    on a.user_id=u.user_id
-order by timestamp
-limit 1000000;
-
+select user_id, created_date, "Token" as channel_name, o.symbol , 'Token' as withdraw_type
+from dwd_okcoin_asset_withdraw_transaction a
+  inner join out_com_currency_price_new o
+    on a.currency_id = o.currency_id and o.pt = a.pt
+where status=2
+  and a.pt=${yesterday}
+  and created_date<to_date("${today}",'yyyymmdd')
+  and created_date>=to_date("${yesterday}",'yyyymmdd')
+) w
+inner join v3_btc_user_uniform_4_usa_team u on u.user_id = w.user_id
+order by withdraw_date desc
+limit 100000;
 '''
 
+#start_date = (dt.datetime.now()).strftime('%Y%m%d')
+#start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
+#end_date = (dt.datetime.now() + dt.timedelta(days=+1)).strftime('%Y%m%d')
 
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
 bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
-bj_start_date = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-180)).strftime('%Y%m%d')
+
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -148,9 +155,8 @@ def upload(events):
 def fetch_data_from_db(sql):
     sql = sql.replace('${yesterday}', bj_yesterday)
     sql = sql.replace('${today}', bj_today)
-    sql = sql.replace('${start_date}', bj_start_date)
 
-    print('DB QUERY BJ TIME:', bj_start_date, 'to', bj_today)
+    print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_today)
 
     sql_res = odps.execute_sql(sql)
 
@@ -158,12 +164,13 @@ def fetch_data_from_db(sql):
 
     cur_events = []
     for row in reader:
-        print(row)
         user_id = row[0]
         time = int(row[1].timestamp())
         channel = row[2]
         symbol = row[3]
         channel_name = row[4]
+
+        #print(row[0], row[1], time, channel)
 
         insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name)).encode()).hexdigest()
 
@@ -206,7 +213,6 @@ def main():
     upl_events = []
 
     for line in cur_events:
-        print(line)
         rownum += 1
         event = line
         if (
@@ -228,6 +234,7 @@ def main():
             upload(upl_events)
         print("BATCH OBJECT:")
         print(upl_events)
+
 
 
 if __name__ == '__main__':
