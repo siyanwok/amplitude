@@ -29,33 +29,35 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select u.tk_user_id, w.withdraw_date, w.channel_name, w.symbol, w.withdraw_type
+select u.tk_user_id, w.withdraw_date, w.channel_name, w.symbol, w.withdraw_type,w.value
 from
 (
-select distinct user_id, create_on as withdraw_date
-,   case
-      when channel_id = 0 then 'Wire Transfer'
-      when channel_id = 24 then 'ACH'
-      when channel_id = 4 then 'Epay'
-      when channel_id in (3,27) then 'SEN'
-      when channel_id in (9,21) then 'PrimeX'
-      else 'other'
-    end as channel_name
-, symbol, 'Fiat' as withdraw_type
-   from com_cash_withdraw_order
-   where status=3
-     and pt=${yesterday}
-   and create_on<to_date("${today}",'yyyymmdd')
-   and create_on>=to_date("${yesterday}",'yyyymmdd')
+  select distinct user_id, create_on as withdraw_date,
+                  case
+                  when channel_id = 0 then 'Wire Transfer'
+                  when channel_id = 24 then 'ACH'
+                  when channel_id = 4 then 'Epay'
+                  when channel_id in (3,27) then 'SEN'
+                  when channel_id in (9,21) then 'PrimeX'
+                  else 'other'
+                  end as channel_name
+  , a.symbol, 'Fiat' as withdraw_type, a.amount*b.price as value
+  from com_cash_withdraw_order a left join out_com_currency_price_new b
+  on a.currency_id=b.currency_id and b.pt=a.pt
+  where status=3
+  and a.pt='${yesterday}'
+and create_on<to_date("${today}",'yyyymmdd')
+and create_on>=to_date("${yesterday}",'yyyymmdd')
 union all
-select user_id, created_date, "Token" as channel_name, o.symbol , 'Token' as withdraw_type
+select user_id, created_date, "Token" as channel_name, o.symbol , 'Token' as withdraw_type,
+       a.amount*o.price as value
 from dwd_okcoin_asset_withdraw_transaction a
-  inner join out_com_currency_price_new o
-    on a.currency_id = o.currency_id and o.pt = a.pt
+left join out_com_currency_price_new o
+on a.currency_id = o.currency_id and o.pt = a.pt
 where status=2
-  and a.pt=${yesterday}
-  and created_date<to_date("${today}",'yyyymmdd')
-  and created_date>=to_date("${yesterday}",'yyyymmdd')
+and a.pt='${yesterday}'
+and created_date<to_date("${today}",'yyyymmdd')
+and created_date>=to_date("${yesterday}",'yyyymmdd')
 ) w
 inner join v3_btc_user_uniform_4_usa_team u on u.user_id = w.user_id
 order by withdraw_date desc
@@ -169,10 +171,11 @@ def fetch_data_from_db(sql):
         channel = row[2]
         symbol = row[3]
         channel_name = row[4]
+        value = row[5]
 
         #print(row[0], row[1], time, channel)
 
-        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name) + str(value)).encode()).hexdigest()
 
         cur_events.append(
             {
@@ -183,6 +186,7 @@ def fetch_data_from_db(sql):
                     'channel': channel,
                     'symbol': symbol,
                     'channel_name': channel_name,
+                    'value': value
                 },
                 'insert_id': insert_id
             }

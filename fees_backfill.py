@@ -16,10 +16,10 @@ from odps import ODPS
 from pytz import timezone
 import pytz
 
-event_type = "deposit_complete"
+event_type = "update_properties"
 
 # Settings
-debug = True
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -29,50 +29,21 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select distinct u.tk_user_id, a.timestamp, a.channel, a.symbol,a.channel_name,
-                a.order_type, a.amount
-from
-((select user_id, completed_on as timestamp
-,   case
-         when channel_id = 0 then 'Wire Transfer'
-         when channel_id = 24 then 'ACH'
-         when channel_id = 4 then 'Epay'
-         when channel_id in (3,27) then 'SEN'
-         when channel_id in (9,21) then 'PrimeX'
-         else 'other'
-         end as channel, w.symbol, channel_name, u.amount*v.price as amount
-, case when order_type=9 then 'Quicktrade' else 'Other' end as order_type
-from v_com_cash_deposit_order_4_usa_team u left join out_com_currency_price_new v
-on u.currency_id=v.currency_id and replace(substr(u.completed_on,1,10),'-','')=v.pt
-join v_currency_com w
-on u.currency_id=w.id
-where status=3
-and u.pt='${yesterday}'
-and completed_on<to_date("${today}",'yyyymmdd')
-and completed_on>=to_date("${yesterday}",'yyyymmdd'))
-union all
-(select user_id, created_date as timestamp,
-        "Token" as channel, c.symbol,
-        "Token" as channel_name, i.amount*o.price as amount,
-        'Non-widget' as order_type
-from asset_ods_okcoin_deposit_transaction i
-left join out_com_currency_price_new o
-on i.currency_id = o.currency_id and o.pt = to_char(i.created_date, 'yyyymmdd')
-join v_currency_com c
-on i.currency_id=c.id
-where status=2
-and i.pt='${yesterday}'
-and created_date<to_date("${today}",'yyyymmdd')
-and created_date>=to_date("${yesterday}",'yyyymmdd')
-)) a
-join v3_btc_user_uniform_4_usa_team u
-on a.user_id=u.user_id
-order by timestamp
-limit 100000;
+select tk_user_id, a.spot_level
+from com_user_level_light a left anti join com_user_level_light b
+on a.user_id=b.user_id and a.spot_level=b.spot_level and b.pt='${two_days_ago}'
+join v3_btc_user_uniform_4_usa_team c
+on a.user_id=c.user_id
+where a.pt='${yesterday}';
 '''
 
 
-bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
+
+#start_date = (dt.datetime.now()).strftime('%Y%m%d')
+#start_date = (dt.datetime.now() + dt.timedelta(days=-1)).strftime('%Y%m%d')
+#end_date = (dt.datetime.now() + dt.timedelta(days=+1)).strftime('%Y%m%d')
+
+bj_two_days_ago = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-2)).strftime('%Y%m%d')
 bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
 
 
@@ -160,9 +131,9 @@ def upload(events):
 
 def fetch_data_from_db(sql):
     sql = sql.replace('${yesterday}', bj_yesterday)
-    sql = sql.replace('${today}', bj_today)
+    sql = sql.replace('${two_days_ago}', bj_two_days_ago)
 
-    print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_today)
+    print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_two_days_ago)
 
     sql_res = odps.execute_sql(sql)
 
@@ -170,30 +141,19 @@ def fetch_data_from_db(sql):
 
     cur_events = []
     for row in reader:
-
         user_id = row[0]
-        time = int(row[1].timestamp())
-        channel = row[2]
-        symbol = row[3]
-        channel_name = row[4]
-        order_source = row[5]
-        value = row[6]
+        fee_tier = row[1]
 
         #print(row[0], row[1], time, channel)
 
-        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name) + str(order_source) + str(value)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(fee_tier)).encode()).hexdigest()
 
         cur_events.append(
             {
                 'event_type': event_type,
                 'user_id': user_id,
-                'time': time,
-                "event_properties": {
-                    'channel': channel,
-                    'symbol': symbol,
-                    'channel_name': channel_name,
-                    'order_source': order_source,
-                    'value': value
+                "user_properties": {
+                    'fee_tier': fee_tier,
                 },
                 'insert_id': insert_id
             }

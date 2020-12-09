@@ -62,7 +62,7 @@ limit 100000;
 
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
 bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
-bj_start_date = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-180)).strftime('%Y%m%d') #lookback window
+bj_start_date = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-28)).strftime('%Y%m%d') #lookback window
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures

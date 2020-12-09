@@ -6,7 +6,7 @@ import time
 from concurrent import futures
 from concurrent.futures import as_completed
 import datetime as dt
-
+import os
 import certifi
 import urllib3
 
@@ -16,10 +16,11 @@ from odps import ODPS
 from pytz import timezone
 import pytz
 
-event_type = "deposit_complete"
+
+event_type = "deposit_refunded"
 
 # Settings
-debug = True
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -28,11 +29,12 @@ accessID = str(os.environ.get("ODPSID"))
 accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
+
 sql = '''
 select distinct u.tk_user_id, a.timestamp, a.channel, a.symbol,a.channel_name,
                 a.order_type, a.amount
 from
-((select user_id, completed_on as timestamp
+(select user_id, update_on as timestamp
 ,   case
          when channel_id = 0 then 'Wire Transfer'
          when channel_id = 24 then 'ACH'
@@ -43,38 +45,21 @@ from
          end as channel, w.symbol, channel_name, u.amount*v.price as amount
 , case when order_type=9 then 'Quicktrade' else 'Other' end as order_type
 from v_com_cash_deposit_order_4_usa_team u left join out_com_currency_price_new v
-on u.currency_id=v.currency_id and replace(substr(u.completed_on,1,10),'-','')=v.pt
+on u.currency_id=v.currency_id and replace(substr(u.update_on,1,10),'-','')=v.pt
 join v_currency_com w
 on u.currency_id=w.id
-where status=3
+where status in (-3,-8)
 and u.pt='${yesterday}'
-and completed_on<to_date("${today}",'yyyymmdd')
-and completed_on>=to_date("${yesterday}",'yyyymmdd'))
-union all
-(select user_id, created_date as timestamp,
-        "Token" as channel, c.symbol,
-        "Token" as channel_name, i.amount*o.price as amount,
-        'Non-widget' as order_type
-from asset_ods_okcoin_deposit_transaction i
-left join out_com_currency_price_new o
-on i.currency_id = o.currency_id and o.pt = to_char(i.created_date, 'yyyymmdd')
-join v_currency_com c
-on i.currency_id=c.id
-where status=2
-and i.pt='${yesterday}'
-and created_date<to_date("${today}",'yyyymmdd')
-and created_date>=to_date("${yesterday}",'yyyymmdd')
-)) a
+and update_on<to_date("${today}",'yyyymmdd')
+and update_on>=to_date("${yesterday}",'yyyymmdd')) a
 join v3_btc_user_uniform_4_usa_team u
 on a.user_id=u.user_id
 order by timestamp
 limit 100000;
 '''
 
-
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
 bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
-
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -159,9 +144,8 @@ def upload(events):
 
 
 def fetch_data_from_db(sql):
-    sql = sql.replace('${yesterday}', bj_yesterday)
     sql = sql.replace('${today}', bj_today)
-
+    sql = sql.replace('${yesterday}', bj_yesterday)
     print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_today)
 
     sql_res = odps.execute_sql(sql)
@@ -170,7 +154,7 @@ def fetch_data_from_db(sql):
 
     cur_events = []
     for row in reader:
-
+        print(row)
         user_id = row[0]
         time = int(row[1].timestamp())
         channel = row[2]
@@ -179,9 +163,7 @@ def fetch_data_from_db(sql):
         order_source = row[5]
         value = row[6]
 
-        #print(row[0], row[1], time, channel)
-
-        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name) + str(order_source) + str(value)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type) + str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name) + str(order_source) + str(value)).encode()).hexdigest()
 
         cur_events.append(
             {
@@ -198,7 +180,6 @@ def fetch_data_from_db(sql):
                 'insert_id': insert_id
             }
         )
-
     return cur_events
 
 
@@ -245,7 +226,6 @@ def main():
             upload(upl_events)
         print("BATCH OBJECT:")
         print(upl_events)
-
 
 
 if __name__ == '__main__':

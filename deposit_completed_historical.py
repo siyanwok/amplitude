@@ -32,36 +32,40 @@ select distinct u.tk_user_id, a.timestamp, a.channel, a.symbol,a.channel_name
 from
 ((select user_id, completed_on as timestamp
 ,   case
-         when channel_id = 0 then 'Bank'
+         when channel_id = 0 then 'Wire Transfer'
          when channel_id = 24 then 'ACH'
          when channel_id = 4 then 'Epay'
          when channel_id in (3,27) then 'SEN'
          when channel_id in (9,21) then 'PrimeX'
          else 'other'
          end as channel, symbol, channel_name
-  from v_com_cash_deposit_order_4_usa_team
-  where status=3
+from v_com_cash_deposit_order_4_usa_team
+where status=3
   and pt=${yesterday}
-  and completed_on >= to_date('${start_date}','yyyymmdd'))
+  and completed_on<to_date("${today}",'yyyymmdd')
+  and completed_on>=to_date("${yesterday}",'yyyymmdd'))
 union all
 (select user_id, created_date as timestamp,  "Token" as channel, symbol, "Token" as channel_name
- from asset_ods_okcoin_deposit_transaction a
-   inner join out_com_currency_price_new o
-     on a.currency_id = o.currency_id and o.pt = to_char(a.created_date, 'yyyymmdd')
- where status=2
-  and a.pt > ${start_date}
+from asset_ods_okcoin_deposit_transaction a
+    inner join out_com_currency_price_new o
+      on a.currency_id = o.currency_id and o.pt = to_char(a.created_date, 'yyyymmdd')
+where status=2
+  and a.pt=${yesterday}
+  and created_date<to_date("${today}",'yyyymmdd')
+  and created_date>=to_date("${yesterday}",'yyyymmdd')
 )) a
-  join v3_btc_user_uniform_4_usa_team u
-    on a.user_id=u.user_id
+join v3_btc_user_uniform_4_usa_team u
+  on a.user_id=u.user_id
 order by timestamp
-limit 1000000;
+limit 100000;
 
 '''
 
 
-bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
-bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
-bj_start_date = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-180)).strftime('%Y%m%d')
+#bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
+bj_today = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-3)).strftime('%Y%m%d')
+bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-5)).strftime('%Y%m%d')
+
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -148,9 +152,8 @@ def upload(events):
 def fetch_data_from_db(sql):
     sql = sql.replace('${yesterday}', bj_yesterday)
     sql = sql.replace('${today}', bj_today)
-    sql = sql.replace('${start_date}', bj_start_date)
 
-    print('DB QUERY BJ TIME:', bj_start_date, 'to', bj_today)
+    print('DB QUERY BJ TIME:', bj_today, 'to', bj_yesterday)
 
     sql_res = odps.execute_sql(sql)
 

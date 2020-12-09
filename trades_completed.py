@@ -29,23 +29,33 @@ accessID = str(os.environ.get("ODPSID"))
 accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
+
 sql = '''
-select u.tk_user_id, c.trade_time, c.volume from v3_btc_user_uniform_4_usa_team u join
-(select a.user_id, min(create_time) as trade_time, sum(a.fee*b.price) as volume from
-((select user_id, create_time, currency_id, fee, pt
+with widget_order as
+(select distinct id, 'Quicktrade' as order_type
+  from dwd_transaction_okcoin_spot_order_finish
+where pt='${yesterday}' and source in (16,17)),
+
+trade as
+(select a.user_id, a.currency_id, a.size,a.fee, a.pt, b.order_type, a.create_time
+from
+((select user_id, currency_id, size, fee, pt, refer_id, create_time
 from v3_user_bill_com_4_usa_team
-where type in (7,8))
+where type in (7,8) and pt='${yesterday}')
 union all
-(select user_id, create_time, currency_id, fee, pt
+(select user_id, currency_id, size, fee, pt, refer_id, create_time
 from v3_user_margin_bill_com_4_usa_team
-where type in (7,8))) a
-join out_com_currency_price_new b
-on a.currency_id=b.currency_id and a.pt=b.pt
-where a.pt>=${end_date} and a.pt<=${start_date}
-group by user_id) c
-on c.user_id=u.user_id
-order by trade_time, tk_user_id
-limit 50000;
+where type in (7,8) and pt='${yesterday}')) a
+left join widget_order b on a.refer_id=b.id)
+
+select a.tk_user_id, b.create_time as timestamp,
+       case when order_type is null then 'Other' else order_type end as order_type,
+       sum(abs(size)*c.price)/2, sum(fee*c.price) as fee
+from v3_btc_user_uniform_4_usa_team a join trade b
+on a.user_id=b.user_id
+join out_com_currency_price_new c
+on b.currency_id=c.currency_id and b.pt=c.pt
+group by a.tk_user_id, b.create_time, order_type;
 '''
 
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
@@ -135,7 +145,7 @@ def upload(events):
 
 def fetch_data_from_db(sql):
     sql = sql.replace('${start_date}', bj_today)
-    sql = sql.replace('${end_date}', bj_yesterday)
+    sql = sql.replace('${yesterday}', bj_yesterday)
     print('DB QUERY BJ TIME:', bj_yesterday, 'to', bj_today)
 
     sql_res = odps.execute_sql(sql)
@@ -146,15 +156,19 @@ def fetch_data_from_db(sql):
     for row in reader:
         user_id = row[0]
         time = int(row[1].timestamp())
-        revenue = row[2]
+        order_source = row[2]
+        value = row[3]
+        revenue = row[4]
 
-        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(revenue)).encode()).hexdigest()
+        insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(revenue) + str(order_source) + str(value)).encode()).hexdigest()
 
         cur_events.append(
             {
                 'event_type': event_type,
                 'user_id': user_id,
                 'time': time,
+                'order_source': order_source,
+                'value': value,
                 'revenue': -revenue,
                 'insert_id': insert_id
             }
