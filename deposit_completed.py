@@ -19,7 +19,7 @@ import pytz
 event_type = "deposit_complete"
 
 # Settings
-debug = True
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))

@@ -167,9 +167,11 @@ def fetch_data_from_db(sql):
                 'event_type': event_type,
                 'user_id': user_id,
                 'time': time,
-                'order_source': order_source,
-                'value': value,
-                'revenue': -revenue,
+                "event_properties": {
+                    'order_source': order_source,
+                    'value': value,
+                    'revenue': -revenue
+                },
                 'insert_id': insert_id
             }
         )
