@@ -54,7 +54,7 @@ union all
 (select user_id, created_date as timestamp,
         "Token" as channel, c.symbol,
         "Token" as channel_name, i.amount*o.price as amount,
-        'Non-widget' as order_type
+        'Other' as order_type
 from asset_ods_okcoin_deposit_transaction i
 left join out_com_currency_price_new o
 on i.currency_id = o.currency_id and o.pt = to_char(i.created_date, 'yyyymmdd')
