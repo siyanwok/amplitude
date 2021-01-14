@@ -19,7 +19,7 @@ import pytz
 event_type = "deposit_complete"
 
 # Settings
-debug = True
+debug = False
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -39,6 +39,7 @@ from
          when channel_id = 4 then 'Epay'
          when channel_id in (3,27) then 'SEN'
          when channel_id in (9,21) then 'PrimeX'
+         when channel_id = 29 then 'Card'
          else 'other'
          end as channel, w.symbol, channel_name, u.amount*v.price as amount
 , case when order_type=9 then 'Quicktrade' else 'Other' end as order_type
@@ -51,19 +52,19 @@ and u.pt='${yesterday}'
 and completed_on<to_date("${today}",'yyyymmdd')
 and completed_on>=to_date("${yesterday}",'yyyymmdd'))
 union all
-(select user_id, created_date as timestamp,
+(select user_id, modify_date as timestamp,
         "Token" as channel, c.symbol,
         "Token" as channel_name, i.amount*o.price as amount,
-        'Non-widget' as order_type
+        'Other' as order_type
 from asset_ods_okcoin_deposit_transaction i
 left join out_com_currency_price_new o
-on i.currency_id = o.currency_id and o.pt = to_char(i.created_date, 'yyyymmdd')
+on i.currency_id = o.currency_id and o.pt = to_char(i.modify_date, 'yyyymmdd')
 join v_currency_com c
 on i.currency_id=c.id
 where status=2
 and i.pt='${yesterday}'
-and created_date<to_date("${today}",'yyyymmdd')
-and created_date>=to_date("${yesterday}",'yyyymmdd')
+and modify_date<to_date("${today}",'yyyymmdd')
+and modify_date>=to_date("${yesterday}",'yyyymmdd')
 )) a
 join v3_btc_user_uniform_4_usa_team u
 on a.user_id=u.user_id
