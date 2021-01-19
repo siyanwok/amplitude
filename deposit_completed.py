@@ -47,7 +47,7 @@ from v_com_cash_deposit_order_4_usa_team u left join out_com_currency_price_new 
 on u.currency_id=v.currency_id and replace(substr(u.completed_on,1,10),'-','')=v.pt
 join v_currency_com w
 on u.currency_id=w.id
-where status=3
+where status in (3,9)
 and u.pt='${yesterday}'
 and completed_on<to_date("${today}",'yyyymmdd')
 and completed_on>=to_date("${yesterday}",'yyyymmdd'))
