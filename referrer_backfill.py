@@ -29,8 +29,8 @@ accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
 
 sql = '''
-select t1.invitee_id, t2.tk_user_id as invitor_id from
-(select distinct b.tk_user_id as invitee_id, partner_id
+select t1.invitee_id, t2.tk_user_id as invitor_id, t1.channel_id from
+(select distinct b.tk_user_id as invitee_id, partner_id, a.channel_id
 from out_com_partner_earnings_daily a join v3_btc_user_uniform_4_usa_team b
 on a.user_id=b.user_id
 where pt='${yesterday}' and type=2
@@ -144,6 +144,8 @@ def fetch_data_from_db(sql):
         print(row)
         user_id = row[0]
         reffered_by = row[1]
+        channel_id = row[2]
+
   #      time = int(row[1].timestamp())
  #       channel = row[2]
 
@@ -157,7 +159,8 @@ def fetch_data_from_db(sql):
                 'event_type': event_type,
                 'user_id': user_id,
                 "user_properties": {
-                    'referred_by': reffered_by
+                    'referred_by': reffered_by,
+                    'channel_id': channel_id
                 },
                 'insert_id': insert_id
             }
