@@ -34,28 +34,36 @@ sql = '''
 with widget_order as
 (select distinct id, 'Quicktrade' as order_type
   from dwd_transaction_okcoin_spot_order_finish
-where pt='${yesterday}' and source in (16,17)),
+  where pt='${yesterday}' and source in (16,17)),
 
-trade as
-(select a.user_id, a.currency_id, a.size,a.fee, a.pt, b.order_type, a.create_time
-from
-((select user_id, currency_id, size, fee, pt, refer_id, create_time
-from v3_user_bill_com_4_usa_team
-where type in (7,8) and pt='${yesterday}')
-union all
-(select user_id, currency_id, size, fee, pt, refer_id, create_time
-from v3_user_margin_bill_com_4_usa_team
-where type in (7,8) and pt='${yesterday}')) a
-left join widget_order b on a.refer_id=b.id)
+  trade as
+  (select a.user_id, a.currency_id, a.size,a.fee, a.pt, b.order_type, a.create_time, d.symbol as base_currency, c.quote_currency
+  from
+  ((select user_id, currency_id, size, fee, pt, refer_id, create_time, product_id
+  from v3_user_bill_com_4_usa_team
+  where type in (7,8) and pt='${yesterday}')
+  union all
+  (select user_id, currency_id, size, fee, pt, refer_id, create_time, product_id
+  from v3_user_margin_bill_com_4_usa_team
+  where type in (7,8) and pt='${yesterday}')) a
+  left join widget_order b on a.refer_id=b.id
+  join v_currency_pair_com c
+  on a.product_id=c.product_id
+  join v_currency_com d
+  on c.base_currency=d.id)
 
-select a.tk_user_id, b.create_time as timestamp,
+
+
+select a.tk_user_id, b.create_time as timestamp, b.base_currency, d.symbol as quote_currency,
        case when order_type is null then 'Other' else order_type end as order_type,
-       sum(abs(size)*c.price)/2, sum(fee*c.price) as fee
+       sum(abs(size)*c.price)/2 as volume, sum(fee*c.price) as fee
 from v3_btc_user_uniform_4_usa_team a join trade b
 on a.user_id=b.user_id
 join out_com_currency_price_new c
 on b.currency_id=c.currency_id and b.pt=c.pt
-group by a.tk_user_id, b.create_time, order_type;
+join v_currency_com d
+on b.quote_currency=d.id
+group by a.tk_user_id, b.create_time, order_type, b.base_currency, d.symbol;
 '''
 
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
@@ -154,11 +162,14 @@ def fetch_data_from_db(sql):
 
     cur_events = []
     for row in reader:
+        print (row)
         user_id = row[0]
         time = int(row[1].timestamp())
-        order_source = row[2]
-        value = row[3]
-        revenue = row[4]
+        symbol = row[2]
+        quote_cur = row[3]
+        order_source = row[4]
+        value = row[5]
+        revenue = row[6]
 
         insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(revenue) + str(order_source) + str(value)).encode()).hexdigest()
 
@@ -170,7 +181,9 @@ def fetch_data_from_db(sql):
                 "event_properties": {
                     'order_source': order_source,
                     'value': value,
-                    'revenue': -revenue
+                    'revenue': -revenue,
+                    'symbol': symbol,
+                    'quote_currency': quote_cur,
                 },
                 'insert_id': insert_id
             }
