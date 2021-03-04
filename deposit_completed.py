@@ -16,10 +16,15 @@ from odps import ODPS
 from pytz import timezone
 import pytz
 
+# This is the name of event which will be sent to amplitude
 event_type = "deposit_complete"
 
 # Settings
+# if debug = True then events won't be sent, but will be displayed in console only
 debug = False
+
+# Amplitude API KEY. They are fetched from env variables. Heroku has a section called env variables and keys there are set to production Amplitude project.
+# Locally I use a dev environment and dev project is defined in .env file (which python will use if you launch this script locally). Working dev .env file is sent to Peter in wechat
 API_KEY = str(os.environ.get("AMPLITUDE_KEY"))
 ENDPOINT = 'https://api.amplitude.com/batch'
 options.api_proxy = str(os.environ.get("PROXY"))
@@ -27,6 +32,10 @@ options.data_proxy = str(os.environ.get("DATA_PROXY"))
 accessID = str(os.environ.get("ODPSID"))
 accessKey = str(os.environ.get("ODPSKEY"))
 odps = ODPS(accessID, accessKey, 'okex_offline', endpoint='http://service.cn-hongkong.maxcompute.aliyun.com/api')
+
+# query to DB. Siyan knows how it works, the only thing to remember if you guys are modifying existing query - be sure to follow same naming in output.
+# For example my scripts here output Other and Quicktrade for deposit_source, however Siyan usually pull those scripts from her tools and output
+# which I am changing every time is "buy/sell widget". Just make sure you keep same values for historical properties.
 
 sql = '''
 select distinct u.tk_user_id, a.timestamp, a.channel, a.symbol,a.channel_name,
@@ -72,10 +81,14 @@ order by timestamp
 limit 100000;
 '''
 
+# Some scripts require historical data but usually it is just yesterday to today range. We set dates in variables and then will replace ${today} and ${yesterday}
+# in query with corresponding variable. All dates are BJ timezone btw.
 
 bj_today = dt.datetime.now(timezone('Asia/Shanghai')).strftime('%Y%m%d')
 bj_yesterday = (dt.datetime.now(timezone('Asia/Shanghai')) + dt.timedelta(days=-1)).strftime('%Y%m%d')
 
+
+# Below is geeky shit to submit events to amplitude & retry logic you don't really need to understand it.
 
 # subclass of ThreadPoolExecutor that provides:
 #   - proper exception logging from futures
@@ -172,6 +185,13 @@ def fetch_data_from_db(sql):
     cur_events = []
     for row in reader:
 
+    # Okay, here is where all the data transformation happens after query returned results. Remember that query return row[0] for 1 output, row[1] for second, etc.
+    # for simplicity I map those outputs to readable variables below. In this case if Data Analyst change query and for example will add another output in the end we
+    # will start getting row[7]. To see what exactly coming in those rows just uncomment the print(row) line below. Don't forget to change debug to True, to avoid sending data
+    # to development project of amplitude. (it is not critical but why burn quota?)
+
+    # print(row)
+
         user_id = row[0]
         time = int(row[1].timestamp())
         channel = row[2]
@@ -180,10 +200,14 @@ def fetch_data_from_db(sql):
         order_source = row[5]
         value = row[6]
 
-        #print(row[0], row[1], time, channel)
 
+    # this is how I came up with deduplication per https://developers.amplitude.com/docs/http-api-v2#event-deduplication
+    # every property from event is added to md5 string so in the end we are getting a unique hash like b0c7792a583d1cf39737956766ca46c2
+    # the beauty of MD5 is that same text will always give you same encrypted hash. So in case event with same name + properties will appear
+    # amplitude just will cut it down on upload
         insert_id = hashlib.md5((str(event_type)+str(user_id) + str(time) + str(channel) + str(symbol) + str(channel_name) + str(order_source) + str(value)).encode()).hexdigest()
 
+    # This is a structure for each event we upload, obviously touch only event_properties array
         cur_events.append(
             {
                 'event_type': event_type,
@@ -201,6 +225,7 @@ def fetch_data_from_db(sql):
         )
 
     return cur_events
+
 
 
 def main():
